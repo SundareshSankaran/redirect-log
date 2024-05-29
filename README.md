@@ -9,7 +9,7 @@ This will prove useful for scenarios requiring automated generation of log or ou
 
 Click on the picture below to watch a quick demo: 
 
-![[Redirect Log](./img/redirect_log.png)](https://www.youtube.com/watch?v=5WsgHbq2C7w)
+[![Redirect Log](./img/redirect_log.png)](https://www.youtube.com/watch?v=5WsgHbq2C7w)
 
 ----
 ## Table of Contents
