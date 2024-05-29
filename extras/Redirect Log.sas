@@ -110,14 +110,117 @@
 
 %mend _extract_sas_folder_path;
 
+/* -----------------------------------------------------------------------------------------* 
+   Macro to handle the redirection of a log file.
+*------------------------------------------------------------------------------------------ */
+%macro _rl_redirect_log;
+   %_identify_content_or_server(&logLocationPath.);
+   %if "&_path_identifier." = "sascontent" %then %do;
+      data _null_;
+         call symputx("_rl_error_flag",1);
+         call symput("_rl_error_desc","Provide a log file path located on the file system.");
+      run;
+   %end;
+   %else %do;
+      data _null_;
+         call symput("_rl_error_desc","Redirected log file is located on the file system.");
+       run;
+   %end;
+   %if &_rl_error_flag.=0 %then %do;
+      %_extract_sas_folder_path(&logLocationPath.);
+      %put NOTE: SAS Folder path is &_sas_folder_path.;
+      data _null_;
+         call symput("logLocation",'"'||"&_sas_folder_path."||'"');
+      run;
+      %let _sas_folder_path=;
+   %end;
+
+%mend _rl_redirect_log;
+
+/* -----------------------------------------------------------------------------------------* 
+   Macro to handle the redirection of an output file.
+*------------------------------------------------------------------------------------------ */
+%macro _rl_redirect_output;
+   %_identify_content_or_server(&outputLocationPath.);
+   %if "&_path_identifier." = "sascontent" %then %do;
+      data _null_;
+         call symputx("_rl_error_flag",1);
+         call symput("_rl_error_desc","Provide an output file path located on the file system.");
+      run;
+   %end;
+   %else %do;
+      data _null_;
+         call symput("_rl_error_desc","Redirected output file is located on the file system.");
+       run;
+   %end;
+   %if &_rl_error_flag.=0 %then %do;
+      %_extract_sas_folder_path(&outputLocationPath.);
+      %put NOTE: SAS Folder path is &_sas_folder_path.;
+      data _null_;
+         call symput("outputLocation",'"'||"&_sas_folder_path."||'"');
+      run;
+      %let _sas_folder_path=;
+   %end;
+
+%mend _rl_redirect_output;
+
+/* -----------------------------------------------------------------------------------------* 
+   Macro to write redirection events to an output dataset.
+*------------------------------------------------------------------------------------------ */
+%macro _rl_write_output_dataset(operation, location);
+   %put &location.;
+
+   %if %sysfunc(exist(&outputTable.)) %then %do;
+      %put NOTE: Output dataset exists;
+   %end;
+   %else %do;
+      data &outputTable.;
+         length operation $8. location $1024. update_dttm 8.;
+         format update_dttm datetime20.;
+         informat update_dttm datetime20.;
+      run;
+   %end;
+
+
+   data WORK.__temp_location;
+      length operation $8. location $1024. update_dttm 8.;
+      format update_dttm datetime20.;
+      informat update_dttm datetime20.;
+
+      operation = "&operation.";
+      location = "&location.";
+      update_dttm = datetime() ;
+   run;
+
+   proc append data=work.__temp_location base=&outputTable. force;
+   quit;
+
+   proc datasets lib= work;
+   delete __temp_location;
+   quit;
+
+%mend _rl_write_output_dataset;
+
 
 /*-----------------------------------------------------------------------------------------*
    EXECUTION CODE MACRO 
 
    _rl prefix stands for Redirect Log
+
+   Note: This code block is a variation from the normal way the run-time control's used in 
+         other custom steps. A redirection of log leads to the program exiting the %do-%end
+         block in an unclean manner.  To avoid this, we use a %goto statement, usually 
+         considered undesirable, but appropriate for situations such as these (to exit a
+         function cleanly).
 *------------------------------------------------------------------------------------------*/
 
 %macro _rl_execution_code;
+
+   %if &_rl_run_trigger. = 0 %then %do;
+      %put NOTE: This step has been disabled.  Nothing to do.;
+      %goto exit;
+   %end;
+   
 
    %put NOTE: Starting main execution code;
 
@@ -129,167 +232,55 @@
 
    %put NOTE: Error flag created;
 
+
+   %global logLocation;
+   %global outputLocation;
+   %let logLocation=LOG;
+   %let outputLocation=PRINT;
+
 /*-----------------------------------------------------------------------------------------*
    If the redirect macro already exists, then check status and perform operation accordingly.
    Else, inform user to run the reassignment (default) operation. 
 *------------------------------------------------------------------------------------------*/
 
-   %if %symexist(&redirectMacro.) %then %do;
-
-      %put NOTE: &&&redirectMacro. is the current log redirection status.;
-      %if "&redirectOperation." = "default" %then %do;
-         proc printto;
-         run;
-         data _null_;
-            call symput("&redirectMacro.","&redirectOperation.");
-         run;
-      %end;
-      %else %do;
-         data _null_;
-            call symputx("_rl_error_flag",1);
-            call symput("_rl_error_desc","A redirection has already been performed. Reset log or output to default location.");
-         run;
+   %if "&redirectOperation." = "log" %then %do;
+      %_rl_redirect_log;
+      %if &_rl_error_flag.=0 %then %do;
+         %_rl_write_output_dataset(&redirectOperation., "&logLocation.");
       %end;
    %end;
-   %else %do;
-
-      %global &redirectMacro.;
-      data _null_;
-         call symput("&redirectMacro.","&redirectOperation.");
-      run;
-      %put NOTE: &redirectOperation. selected;
-      %put NOTE: &&&redirectMacro. selected;
-
-      %if "&&&redirectMacro." = "log" %then %do;
-         %_identify_content_or_server(&logLocationPath.);
-         %if "&_path_identifier." = "sascontent" %then %do;
-            data _null_;
-               call symputx("_rl_error_flag",1);
-               call symput("_rl_error_desc","Provide a log file path located on the file system.");
-            run;
-         %end;
-         %else %do;
-            data _null_;
-               call symput("_rl_error_desc","Redirected log file is located on the file system.");
-            run;
-         %end;
-         %if &_rl_error_flag.=0 %then %do;
-            %_extract_sas_folder_path(&logLocationPath.);
-            %put NOTE: SAS Folder path is &_sas_folder_path.;
-            %global &logMacro.;
-            %let logLocation = &_sas_folder_path.;
-            %let &logMacro. = &logLocation.;
-            %let _sas_folder_path=;
-         %end;
-         %if &_rl_error_flag.=0 %then %do;
-            proc printto log="&logLocation." NEW;
-            run;
-            %put NOTE: This is a test;
-            proc printto;
-            run;
-         %end;
-
-      %end;
-      %else %if "&&&redirectMacro." = "output" %then %do;
-         %_identify_content_or_server(&outputLocationPath.);
-         %if "&_path_identifier." = "sascontent" %then %do;
-            data _null_;
-               call symputx("_rl_error_flag",1);
-               call symput("_rl_error_desc","Provide an output file path located on the file system.");
-            run;
-         %end;
-         %else %do;
-            data _null_;
-               call symput("_rl_error_desc","Redirected output file is located on the file system.");
-            run;
-         %end;
-         %if &_rl_error_flag.=0 %then %do;
-            %_extract_sas_folder_path(&outputLocationPath.);
-            %put NOTE: SAS Folder path is &_sas_folder_path.;
-            %global &outputMacro.;
-            %let outputLocation = &_sas_folder_path.;
-            %let &outputMacro. = &outputLocation.;
-            %let _sas_folder_path=;
-         %end;
-         %if &_rl_error_flag.=0 %then %do;
-            proc printto print="&outputLocation." NEW;
-            run;
-            %put NOTE: This is a test;
-            proc print data=SASHELP.CARS;
-            run;
-            proc printto;
-            run;
-         %end;
-
-      %end;
-      %else %if "&&&redirectMacro." = "both" %then %do;
-         %_identify_content_or_server(&logLocationPath.);
-         %if "&_path_identifier." = "sascontent" %then %do;
-            data _null_;
-               call symputx("_rl_error_flag",1);
-               call symput("_rl_error_desc","Provide a log file path located on the file system.");
-            run;
-         %end;
-         %else %do;
-            data _null_;
-               call symput("_rl_error_desc","Redirected log file is located on the file system.");
-            run;
-         %end;
-
-         %_identify_content_or_server(&outputLocationPath.);
-         %if "&_path_identifier." = "sascontent" %then %do;
-            data _null_;
-               call symputx("_rl_error_flag",1);
-               call symput("_rl_error_desc","Provide an output file path located on the file system.");
-            run;
-         %end;
-         %else %do;
-            data _null_;
-               call symput("_rl_error_desc","Redirected output file is located on the file system.");
-            run;
-         %end;
-
-         %if &_rl_error_flag.=0 %then %do;
-            %_extract_sas_folder_path(&logLocationPath.);
-            %put NOTE: SAS Folder path is &_sas_folder_path.;
-            %global &logMacro.;
-            %let logLocation = &_sas_folder_path.;
-            %let &logMacro. = &logLocation.;
-            %let _sas_folder_path=;
-         %end;
-
-         %if &_rl_error_flag.=0 %then %do;
-            %_extract_sas_folder_path(&outputLocationPath.);
-            %put NOTE: SAS Folder path is &_sas_folder_path.;
-            %global &outputMacro.;
-            %let outputLocation = &_sas_folder_path.;
-            %let &outputMacro. = &outputLocation.;
-            %let _sas_folder_path=;
-         %end;
-
-         %if &_rl_error_flag.=0 %then %do;
-            proc printto log="&logLocation." print="&outputLocation." NEW;
-            run;
-            %put NOTE: This is a test;
-            proc print data=SASHELP.CARS;
-            run;
-            proc printto;
-            run;
-         %end;
-      %end;
-      %else %do;
-         proc printto;
-         run;
+   %else %if "&redirectOperation." = "output" %then %do;
+      %_rl_redirect_output;
+      %if &_rl_error_flag.=0 %then %do;
+         %_rl_write_output_dataset(&redirectOperation., "&outputLocation.");
       %end;
    %end;
+   %else %if "&redirectOperation." = "both" %then %do;
+      %_rl_redirect_log;
+      %_rl_redirect_output;
+      %if &_rl_error_flag.=0 %then %do;
+         %_rl_write_output_dataset(&redirectOperation._log, "&logLocation.");
+         %_rl_write_output_dataset(&redirectOperation._output, "&outputLocation.");
+      %end;
+   %end;
+   %else %if "&redirectOperation." = "default" %then %do;
+      %_rl_write_output_dataset(&redirectOperation., default_location);
+   %end;
 
-%mend _rl_execution_code;
+   proc printto LOG=&logLocation. PRINT=&outputLocation. ;
+   run;
+
+
+%exit: %mend _rl_execution_code;
 
 /*-----------------------------------------------------------------------------------------*
    EXECUTION CODE
    The execution code is controlled by the trigger variable defined in this custom step. This
    trigger variable is in an "enabled" (value of 1) state by default, but in some cases, as 
    dictated by logic, could be set to a "disabled" (value of 0) state.
+
+   The execution below is a variation from the normal use of a run-time trigger.  Refer note for 
+   %_rl_execution_code.
 *------------------------------------------------------------------------------------------*/
 /*-----------------------------------------------------------------------------------------*
    Create run-time trigger. 
@@ -300,24 +291,12 @@
 /*-----------------------------------------------------------------------------------------*
    Execute 
 *------------------------------------------------------------------------------------------*/
-
-%if &_rl_run_trigger. = 1 %then %do;
-
-   %_rl_execution_code;
-
-%end;
-
-%if &_rl_run_trigger. = 0 %then %do;
-
-   %put NOTE: This step has been disabled.  Nothing to do.;
-
-%end;
-
+   
+%_rl_execution_code;
 
 %put NOTE: Final summary;
 %put NOTE: Status of error flag - &_rl_error_flag. ;
 %put NOTE: Error desc - &_rl_error_desc. ;
-
 
 /*-----------------------------------------------------------------------------------------*
    Clean up existing macro variables and macro definitions.
@@ -339,6 +318,8 @@
    %symdel _rl_run_trigger;
 %end;
 
+%sysmacdelete _rl_redirect_log;
+%sysmacdelete _rl_redirect_output;
 %sysmacdelete _rl_execution_code;
 %sysmacdelete _create_runtime_trigger;
 %sysmacdelete _identify_content_or_server;
